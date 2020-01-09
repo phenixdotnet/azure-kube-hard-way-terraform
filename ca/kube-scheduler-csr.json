@@ -1,0 +1,16 @@
+{
+    "CN": "system:kube-scheduler",
+    "key": {
+      "algo": "rsa",
+      "size": 2048
+    },
+    "names": [
+      {
+        "C": "FR",
+        "L": "Rennes",
+        "O": "system:kube-scheduler",
+        "OU": "Phenix",
+        "ST": "Bretagne"
+      }
+    ]
+  }

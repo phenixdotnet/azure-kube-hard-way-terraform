@@ -1,0 +1,5 @@
+local.tf
+terraform.tfstate*
+.terraform
+ca/*.pem
+ca/*.csr
