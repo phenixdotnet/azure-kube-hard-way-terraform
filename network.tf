@@ -27,9 +27,9 @@ resource "azurerm_public_ip" "bastion" {
   sku                 = "Standard"
 }
 
-resource "azurerm_public_ip" "agent" {
-  count               = var.count_agent
-  name                = "${var.prefix}-ext-agent-${count.index + 1}-ip"
+resource "azurerm_public_ip" "worker" {
+  count               = var.count_worker
+  name                = "${var.prefix}-ext-worker-${count.index + 1}-ip"
   location            = azurerm_resource_group.kubetest.location
   resource_group_name = azurerm_resource_group.kubetest.name
   allocation_method   = "Static"
@@ -37,7 +37,7 @@ resource "azurerm_public_ip" "agent" {
 }
 
 resource "azurerm_public_ip" "master" {
-  count               = var.count_agent
+  count               = var.count_master
   name                = "${var.prefix}-ext-master-${count.index + 1}-ip"
   location            = azurerm_resource_group.kubetest.location
   resource_group_name = azurerm_resource_group.kubetest.name
@@ -51,17 +51,20 @@ resource "azurerm_network_interface" "internal_master" {
   location            = azurerm_resource_group.kubetest.location
   resource_group_name = azurerm_resource_group.kubetest.name
 
+  network_security_group_id   = azurerm_network_security_group.firewall.id
+
   ip_configuration {
     name                          = "primary"
     subnet_id                     = azurerm_subnet.kubetest.id
     private_ip_address_allocation = "Dynamic"
     public_ip_address_id          = azurerm_public_ip.master[count.index].id
+    load_balancer_backend_address_pools_ids = [azurerm_lb_backend_address_pool.kubeapi_pool.id]
   }
 } 
 
-resource "azurerm_network_interface" "internal_agent" {
-  count               = var.count_agent
-  name                = "${var.prefix}-int-agent-${count.index + 1}-nic"
+resource "azurerm_network_interface" "internal_worker" {
+  count               = var.count_worker
+  name                = "${var.prefix}-int-worker-${count.index + 1}-nic"
   location            = azurerm_resource_group.kubetest.location
   resource_group_name = azurerm_resource_group.kubetest.name
 
@@ -71,7 +74,7 @@ resource "azurerm_network_interface" "internal_agent" {
     name                          = "primary"
     subnet_id                     = azurerm_subnet.kubetest.id
     private_ip_address_allocation = "Dynamic"
-    public_ip_address_id          = azurerm_public_ip.agent[count.index].id
+    public_ip_address_id          = azurerm_public_ip.worker[count.index].id
   }
 }
 
