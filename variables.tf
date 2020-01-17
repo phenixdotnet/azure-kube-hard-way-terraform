@@ -6,8 +6,12 @@ variable "location" {
   default = "West Europe"
 }
 
-variable "cloud_init_file" {
-  default = "cloud_init.cfg"
+variable "cloud_init_file_master" {
+  default = "cloud_init_master.cfg"
+}
+
+variable "cloud_init_file_worker" {
+  default = "cloud_init_worker.cfg"
 }
 
 variable "cluster_name" {

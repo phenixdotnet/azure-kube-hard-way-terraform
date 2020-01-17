@@ -51,7 +51,7 @@ resource "azurerm_virtual_machine" "kubemaster" {
     computer_name   = "${var.prefix}-master-${count.index + 1}"
     admin_username  = var.admin_username
     admin_password  = var.admin_password
-    custom_data     = file(var.cloud_init_file)
+    custom_data     = file(var.cloud_init_file_master)
   }
 
   os_profile_linux_config {
@@ -265,7 +265,7 @@ resource "local_file" "etcd_config" {
 }
 
 resource "null_resource" "etcd_reload" {
-  depends_on = [null_resource.kubemaster_config]
+  depends_on = [local_file.etcd_config]
   count = var.count_master
 
   connection {
@@ -307,7 +307,7 @@ resource "null_resource" "kube_download" {
   }
 
   provisioner "file" {
-      source = "scripts/download_kubernetes.sh"
+      source = "scripts/download_kubernetes_master.sh"
       destination = "/home/${var.admin_username}/download_kubernetes.sh"
   }
 
@@ -426,6 +426,35 @@ resource "null_resource" "kube-scheduler_config" {
       "sudo mv kube-scheduler.service /etc/systemd/system/kube-scheduler.service",
       "sudo mv kube-scheduler.yaml /etc/kubernetes/config/kube-scheduler.yaml",
       "sudo systemctl daemon-reload && sudo systemctl enable kube-scheduler && sudo systemctl start kube-scheduler"
+    ]
+  }
+}
+
+resource "null_resource" "kube-rbac" {
+  depends_on = [null_resource.kube-scheduler_config]
+
+  connection {
+    type = "ssh"
+    user = var.admin_username
+    host = azurerm_public_ip.master[0].ip_address
+    private_key = file(var.private_ssh_key)
+    agent = false
+  }
+  
+  provisioner "file" {
+      source = "config/kube-apiserver-to-kubelet-ClusterRole.yaml"
+      destination = "/home/${var.admin_username}/kube-apiserver-to-kubelet-ClusterRole.yaml"
+  }
+
+  provisioner "file" {
+      source = "config/kube-apiserver-to-kubelet-ClusterRoleBinding.yaml"
+      destination = "/home/${var.admin_username}/kube-apiserver-to-kubelet-ClusterRoleBinding.yaml"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "kubectl apply --kubeconfig admin.kubeconfig -f /home/${var.admin_username}/kube-apiserver-to-kubelet-ClusterRole.yaml",
+      "kubectl apply --kubeconfig admin.kubeconfig -f /home/${var.admin_username}/kube-apiserver-to-kubelet-ClusterRoleBinding.yaml"
     ]
   }
 }
