@@ -70,11 +70,15 @@ resource "azurerm_virtual_machine" "kubemaster" {
 }
 
 locals {
-  internal_subnet = "${cidrhost("${azurerm_network_interface.internal_master[0].private_ip_address}/${var.subnet_bits}", 0)}/${var.subnet_bits}"
 
   internal_ips = [
     for net in azurerm_network_interface.internal_master:
     net.private_ip_address
+  ]
+
+  master_public_ips = [
+    for net in azurerm_public_ip.master:
+    net.ip_address
   ]
 
   internal_etcd_endpoints = [
@@ -288,7 +292,7 @@ resource "null_resource" "etcd_reload" {
       "sudo mkdir -p /etc/etcd /var/lib/etcd",
       "sudo cp ca.pem kubernetes-key.pem kubernetes.pem /etc/etcd/",
       "sudo mv /home/${var.admin_username}/etcd.service /etc/systemd/system/etcd.service",
-      "sudo systemctl daemon-reload && sudo systemctl enable etcd && sudo systemctl start etcd"
+      "sudo systemctl daemon-reload && sudo systemctl enable etcd && sudo systemctl --no-block start etcd"
     ]
   }
 }
@@ -328,7 +332,7 @@ resource "local_file" "kube-apiserver_config" {
   content = templatefile("config/kube-apiserver.service.tmpl", {
       private_ip = azurerm_network_interface.internal_master[count.index].private_ip_address, 
       etcd_cluster = join(",", local.internal_etcd_public_endpoints),
-      cidr = local.internal_subnet,
+      cidr = "10.32.0.0/24",
       count_master = length(azurerm_network_interface.internal_master)})
   filename = "config/kube-apiserver.service_${azurerm_virtual_machine.kubemaster[count.index].name}"
 
@@ -362,7 +366,8 @@ resource "local_file" "kube-controller-manager_config" {
   content = templatefile("config/kube-controller-manager.service.tmpl", {
       private_ip = azurerm_network_interface.internal_master[count.index].private_ip_address, 
       etcd_cluster = join(",", local.internal_etcd_public_endpoints),
-      cidr = local.internal_subnet})
+      cluster_cidr = var.cluster_cidr,
+      cluster_service_cidr = var.cluster_service_cidr})
   filename = "config/kube-controller-manager.service_${azurerm_virtual_machine.kubemaster[count.index].name}"
 
   connection {
@@ -457,4 +462,8 @@ resource "null_resource" "kube-rbac" {
       "kubectl apply --kubeconfig admin.kubeconfig -f /home/${var.admin_username}/kube-apiserver-to-kubelet-ClusterRoleBinding.yaml"
     ]
   }
+}
+
+output "master_ip_addresses" {
+  value = local.master_public_ips
 }

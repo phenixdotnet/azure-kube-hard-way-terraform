@@ -59,6 +59,13 @@ resource "azurerm_virtual_machine" "kubeworker" {
 
 }
 
+locals {
+  worker_public_ips = [
+    for net in azurerm_public_ip.worker:
+    net.ip_address
+  ]
+}
+
 resource "null_resource" "kubeworker_ca" {
   depends_on = [azurerm_virtual_machine.kubeworker]
 
@@ -104,8 +111,31 @@ resource "null_resource" "kubeworker_ca" {
   }
 }
 
+resource "local_file" "kubeworker-kube-proxy-config" {
+  depends_on = [null_resource.kubeworker_ca, null_resource.kube-rbac]
+  count = var.count_worker
+
+  content = templatefile("config/kube-proxy-config.yaml.tmpl", {
+    cluster_cidr = var.cluster_cidr
+  })
+  filename = "config/kube-proxy-config.yaml"
+
+  connection {
+    type = "ssh"
+    user = var.admin_username
+    host = azurerm_public_ip.worker[count.index].ip_address
+    private_key = file(var.private_ssh_key)
+    agent = false
+  }
+
+  provisioner "file" {
+    source = "config/kube-proxy-config.yaml"
+    destination = "/home/${var.admin_username}/kube-proxy-config.yaml"
+  }
+}
+
 resource "null_resource" "kubeworker_config" {
-  depends_on = [null_resource.kubeworker_ca]
+  depends_on = [local_file.kubeworker-kube-proxy-config]
   count = var.count_worker
 
   connection {
@@ -122,17 +152,17 @@ resource "null_resource" "kubeworker_config" {
   }
 
   provisioner "local-exec" {
-      command = "kubectl config set-credentials system:node:${local.worker_virtual_machine_name}-${count.index + 1} --client-certificate=${local.worker_virtual_machine_name}-${count.index + 1}.pem --client-key=${local.worker_virtual_machine_name}-${count.index + 1}-key.pem --embed-certs=true --kubeconfig=${local.worker_virtual_machine_name}-${count.index + 1}.kubeconfig"
+      command = "kubectl config set-credentials system:node:${local.worker_virtual_machine_name}-${count.index + 1} --client-certificate=${local.worker_virtual_machine_name}-${count.index + 1}.pem --client-key=${local.worker_virtual_machine_name}-${count.index + 1}-key.pem --embed-certs=true --kubeconfig=../config/${local.worker_virtual_machine_name}-${count.index + 1}.kubeconfig"
       working_dir = "ca"
   }
 
   provisioner "local-exec" {
-      command = "kubectl config set-context default --cluster=${var.cluster_name} --user=system:node:${local.worker_virtual_machine_name}-${count.index + 1} --kubeconfig=${local.worker_virtual_machine_name}-${count.index + 1}.kubeconfig"
+      command = "kubectl config set-context default --cluster=${var.cluster_name} --user=system:node:${local.worker_virtual_machine_name}-${count.index + 1} --kubeconfig=../config/${local.worker_virtual_machine_name}-${count.index + 1}.kubeconfig"
       working_dir = "ca"
   }
 
   provisioner "local-exec" {
-      command = "kubectl config use-context default --kubeconfig=${local.worker_virtual_machine_name}-${count.index + 1}.kubeconfig"
+      command = "kubectl config use-context default --kubeconfig=../config/${local.worker_virtual_machine_name}-${count.index + 1}.kubeconfig"
       working_dir = "ca"
   }
 
@@ -168,8 +198,8 @@ resource "null_resource" "kubeworker_config" {
   }
 
   provisioner "file" {
-    source = "config/kube-proxy-config.yaml"
-    destination = "/home/${var.admin_username}/kube-proxy-config.yaml"
+    source = "config/kube-proxy.service"
+    destination = "/home/${var.admin_username}/kube-proxy.service"
   }
 
   provisioner "file" {
@@ -194,9 +224,9 @@ resource "local_file" "kubeworker_bridge_config" {
   count = var.count_worker
 
   content = templatefile("config/10-bridge.conf.tmpl", {
-    pod_cidr = local.internal_subnet
+    pod_cidr = replace(var.pods_cidr, "X", count.index + 1)
   })
-  filename = "config/10-bridge.conf"
+  filename = "config/10-bridge.conf_${count.index}"
 
   connection {
     type = "ssh"
@@ -207,7 +237,7 @@ resource "local_file" "kubeworker_bridge_config" {
   }
 
   provisioner "file" {
-    source = "config/10-bridge.conf"
+    source = "config/10-bridge.conf_${count.index}"
     destination = "/home/${var.admin_username}/10-bridge.conf"
   }
 }
@@ -219,13 +249,13 @@ resource "local_file" "kubeworker_kubelet_config" {
 
   content = templatefile("config/kubelet-config.yaml.tmpl", {
       hostname = azurerm_virtual_machine.kubeworker[count.index].name
-      pod_cidr = local.internal_subnet})
+      pod_cidr = replace(var.pods_cidr, "X", count.index + 1)})
   filename = "config/kubelet-config.yaml_${azurerm_virtual_machine.kubeworker[count.index].name}"
 
   connection {
     type = "ssh"
     user = var.admin_username
-    host = azurerm_public_ip.master[count.index].ip_address
+    host = azurerm_public_ip.worker[count.index].ip_address
     private_key = file(var.private_ssh_key)
     agent = false
   }
@@ -254,9 +284,14 @@ resource "null_resource" "kubeworker_config_final" {
     agent = false
   }
 
+  provisioner "file" {
+    source = "scripts/download_kubernetes_worker.sh"
+    destination = "/home/${var.admin_username}/download_kubernetes_worker.sh"
+  }
+
   provisioner "remote-exec" {
     inline = [
-      "sudo mkdir -p /var/lib/kubelet/ /var/lib/kubernetes/ /var/lib/kube-proxy/ /etc/cni/net.d/ /etc/containerd/",
+      "chmod +x download_kubernetes_worker.sh && ./download_kubernetes_worker.sh",
       "sudo mv ${local.worker_virtual_machine_name}-${count.index + 1}-key.pem ${local.worker_virtual_machine_name}-${count.index + 1}.pem /var/lib/kubelet/",
       "sudo mv ${local.worker_virtual_machine_name}-${count.index + 1}.kubeconfig /var/lib/kubelet/kubeconfig",
       "sudo mv ca.pem /var/lib/kubernetes/",
@@ -265,8 +300,17 @@ resource "null_resource" "kubeworker_config_final" {
       "sudo mv config.toml /etc/containerd/config.toml",
       "sudo mv kube-proxy.kubeconfig /var/lib/kube-proxy/kubeconfig",
       "sudo mv kube-proxy-config.yaml /var/lib/kube-proxy/kube-proxy-config.yaml",
-      "sudo mv containerd.service /etc/systemd/system/containerd.service && sudo systemctl daemon-reload && sudo systemctl enable containerd && sudo systemctl start containerd",
-      "sudo mv kubelet.service /etc/systemd/system/kubelet.service && sudo systemctl daemon-reload && sudo systemctl enable kubelet && sudo systemctl start kubelet"
-    ]
+      "sudo mv kubelet-config.yaml /var/lib/kubelet/kubelet-config.yaml",
+      "sudo mv containerd.service /etc/systemd/system/containerd.service",
+      "sudo mv kubelet.service /etc/systemd/system/kubelet.service",
+      "sudo mv kube-proxy.service /etc/systemd/system/kube-proxy.service",
+      "sudo systemctl daemon-reload",
+      "sudo systemctl enable containerd kubelet kube-proxy",
+      "sudo systemctl start containerd kubelet kube-proxy"
+    ]                               
   }
+}
+
+output "worker_ip_addresses" {
+  value = local.worker_public_ips
 }

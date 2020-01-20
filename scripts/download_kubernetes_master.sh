@@ -1,4 +1,4 @@
-KUBE_VERSION="1.17.0"
+KUBE_VERSION="1.17.1"
 
 wget -q --show-progress --https-only --timestamping \
   "https://storage.googleapis.com/kubernetes-release/release/v${KUBE_VERSION}/bin/linux/amd64/kube-apiserver" \

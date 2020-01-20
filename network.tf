@@ -1,22 +1,32 @@
 resource "azurerm_virtual_network" "kubetest" {
   name                = "${var.prefix}-network"
-  address_space       = ["172.16.0.0/16"]
+  address_space       = [var.network_address_range]
   resource_group_name = azurerm_resource_group.kubetest.name
   location            = azurerm_resource_group.kubetest.location
 }
 
 resource "azurerm_subnet" "kubetest" {
-  name                 = var.prefix
+  name                 = "${var.prefix}-vms"
   virtual_network_name = azurerm_virtual_network.kubetest.name
   resource_group_name  = azurerm_resource_group.kubetest.name
-  address_prefix       = "172.16.1.0/24"
+  address_prefix       = var.vms_cidr
 }
+
+#resource "azurerm_subnet" "kube_pod_cidr" {
+
+#  count                = var.count_worker
+
+#  name                 = "${var.prefix}_pod_${count.index + 1}"
+#  virtual_network_name = azurerm_virtual_network.kubetest.name
+#  resource_group_name  = azurerm_resource_group.kubetest.name
+#  address_prefix       = replace(var.pods_cidr, "X", count.index + 1)
+#}
 
 resource "azurerm_subnet" "bastion" {
   name                 = "AzureBastionSubnet"
   resource_group_name  = azurerm_resource_group.kubetest.name
   virtual_network_name = azurerm_virtual_network.kubetest.name
-  address_prefix       = "172.16.2.224/27"
+  address_prefix       = "172.16.254.224/27"
 }
 
 resource "azurerm_public_ip" "bastion" {
@@ -52,6 +62,7 @@ resource "azurerm_network_interface" "internal_master" {
   resource_group_name = azurerm_resource_group.kubetest.name
 
   network_security_group_id   = azurerm_network_security_group.firewall.id
+  enable_ip_forwarding  = true
 
   ip_configuration {
     name                          = "primary"
@@ -69,6 +80,7 @@ resource "azurerm_network_interface" "internal_worker" {
   resource_group_name = azurerm_resource_group.kubetest.name
 
   network_security_group_id   = azurerm_network_security_group.firewall.id
+  enable_ip_forwarding = true
 
   ip_configuration {
     name                          = "primary"
@@ -96,4 +108,27 @@ resource "azurerm_network_security_rule" "ssh" {
   destination_address_prefix  = "*"
   resource_group_name         = azurerm_resource_group.kubetest.name
   network_security_group_name = azurerm_network_security_group.firewall.name
+}
+
+resource "azurerm_route_table" "workers_to_pod_cidr" {
+  name                          = "${var.prefix}-route-table"
+  location                      = azurerm_resource_group.kubetest.location
+  resource_group_name           = azurerm_resource_group.kubetest.name
+}
+
+resource "azurerm_route" "workers_to_pod_cidr" {
+
+  count               = var.count_worker
+
+  name                = "${var.prefix}-route-${azurerm_virtual_machine.kubeworker[count.index].name}"
+  resource_group_name = azurerm_resource_group.kubetest.name
+  route_table_name    = azurerm_route_table.workers_to_pod_cidr.name
+  address_prefix      = replace(var.pods_cidr, "X", count.index + 1)
+  next_hop_in_ip_address = azurerm_network_interface.internal_worker[count.index].private_ip_address
+  next_hop_type       = "VirtualAppliance"
+}
+
+resource "azurerm_subnet_route_table_association" "workers_to_pod_cidr" {
+  subnet_id      = azurerm_subnet.kubetest.id
+  route_table_id = azurerm_route_table.workers_to_pod_cidr.id
 }
