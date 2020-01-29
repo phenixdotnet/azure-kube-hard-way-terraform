@@ -3,3 +3,4 @@ terraform.tfstate*
 .terraform
 ca/*.pem
 ca/*.csr
+config/*.kubeconfig

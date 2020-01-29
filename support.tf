@@ -30,7 +30,7 @@ resource "azurerm_virtual_machine" "support" {
 
   primary_network_interface_id  = azurerm_network_interface.internal_support.id
   network_interface_ids         = [azurerm_network_interface.internal_support.id]
-  vm_size                       = "Standard_A4_v2"
+  vm_size                       = "Standard_B2s"
   delete_os_disk_on_termination = true
 
   storage_image_reference {
@@ -81,4 +81,15 @@ resource "azurerm_virtual_machine" "support" {
       source = "config/admin.kubeconfig"
       destination = "/home/${var.admin_username}/admin.kubeconfig"
   }
+
+  provisioner "remote-exec" {
+    inline = [
+      "mkdir -p ~/.kube && mv admin.kubeconfig ~/.kube/default",
+      "wget -q --show-progress --https-only --timestamping https://storage.googleapis.com/kubernetes-release/release/v1.17.1/bin/linux/amd64/kubectl && chmod +x kubectl && sudo mv kubectl /usr/local/bin/"
+    ]
+  }
+}
+
+output "support_ip_address" {
+  value = azurerm_public_ip.support.ip_address
 }

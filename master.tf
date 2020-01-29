@@ -30,7 +30,7 @@ resource "azurerm_virtual_machine" "kubemaster" {
 
   primary_network_interface_id  = azurerm_network_interface.internal_master[count.index].id
   network_interface_ids         = [azurerm_network_interface.internal_master[count.index].id]
-  vm_size                       = "Standard_A4_v2"
+  vm_size                       = "Standard_B2s"
   delete_os_disk_on_termination = true
 
   storage_image_reference {
@@ -460,6 +460,24 @@ resource "null_resource" "kube-rbac" {
     inline = [
       "kubectl apply --kubeconfig admin.kubeconfig -f /home/${var.admin_username}/kube-apiserver-to-kubelet-ClusterRole.yaml",
       "kubectl apply --kubeconfig admin.kubeconfig -f /home/${var.admin_username}/kube-apiserver-to-kubelet-ClusterRoleBinding.yaml"
+    ]
+  }
+}
+
+resource "null_resource" "install_coredns" {
+  depends_on = [ null_resource.kubeworker_config_final ]
+
+  connection {
+    type = "ssh"
+    user = var.admin_username
+    host = azurerm_public_ip.master[0].ip_address
+    private_key = file(var.private_ssh_key)
+    agent = false
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "kubectl apply -f https://storage.googleapis.com/kubernetes-the-hard-way/coredns.yaml"
     ]
   }
 }

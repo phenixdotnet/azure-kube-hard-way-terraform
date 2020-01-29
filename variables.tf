@@ -43,6 +43,6 @@ variable "count_master" {
 }
 
 variable "count_worker" {
-    default = 2
+    default = 3
 }
 
